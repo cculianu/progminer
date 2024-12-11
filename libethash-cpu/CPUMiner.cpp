@@ -42,10 +42,16 @@ along with progminer.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "CPUMiner.h"
 
+#include <atomic>
+
 
 /* Sanity check for defined OS */
 #if defined(__APPLE__) || defined(__MACOSX)
 /* MACOSX */
+#  include <sys/types.h>
+#  include <sys/sysctl.h>
+#  include <mach/mach.h>
+#  include <mach/mach_time.h>
 #elif defined(__linux__)
 /* linux */
 #elif defined(_WIN32)
@@ -68,7 +74,18 @@ using namespace eth;
 static size_t getTotalPhysAvailableMemory()
 {
 #if defined(__APPLE__) || defined(__MACOSX)
-#error "TODO: Function CPUMiner getTotalPhysAvailableMemory() on MAXOSX not implemented"
+    // can't easily query memory on darwin, just take 1/2 of physical memory
+    uint64_t ret = 2048u * 1024u * 1024u; // just return 2GB, even if it's wrong, for unknown platforms
+    char buf[8];
+    size_t bufsz = 8;
+    if ( 0 == ::sysctlbyname("hw.memsize", buf, &bufsz, nullptr, 0) ) {
+        switch (bufsz) {
+        case 4: { uint32_t tmp; std::memcpy(&tmp, buf, 4); ret = tmp; ret /= uint64_t(2); break; }
+        case 8: { std::memcpy(&ret, buf, 8); ret /= uint64_t(2); break; }
+        default: cwarn << "Failed to query physical RAM, kernel returned unexpected bufsize: " << bufsz << "\n";
+        }
+    }
+    return ret;
 #elif defined(__linux__)
     long pages = sysconf(_SC_AVPHYS_PAGES);
     if (pages == -1L)
@@ -116,7 +133,16 @@ unsigned CPUMiner::getNumDevices()
     }
     return cpus;
 #elif defined(__APPLE__) || defined(__MACOSX)
-#error "TODO: Function CPUMiner::getNumDevices() on MAXOSX not implemented"
+    static std::atomic<unsigned> nProcs{0u};
+    unsigned procs;
+    if (!(procs = nProcs.load())) {
+        int a = 0;
+        size_t b = sizeof(a);
+        if (0 == sysctlbyname("hw.physicalcpu",&a,&b,nullptr,0)) {
+            nProcs = unsigned(a);
+        }
+    }
+    return (procs = nProcs.load()) ? procs : 1;
 #elif defined(__linux__)
     long cpus_available;
     cpus_available = sysconf(_SC_NPROCESSORS_ONLN);
@@ -172,7 +198,7 @@ bool CPUMiner::initDevice()
            << " Memory : " << dev::getFormattedMemory((double)m_deviceDescriptor.totalMemory);
 
 #if defined(__APPLE__) || defined(__MACOSX)
-#error "TODO: Function CPUMiner::initDevice() on MAXOSX not implemented"
+    cwarn << "TODO: Function CPUMiner::initDevice() on MAXOSX not implemented" << "\n";
 #elif defined(__linux__)
     cpu_set_t cpuset;
     int err;
